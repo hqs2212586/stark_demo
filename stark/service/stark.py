@@ -9,6 +9,7 @@ from django.urls import reverse
 from stark.utils.page import Pagination
 from django.db.models import Q
 from django.db.models.fields.related import ManyToManyField, ForeignKey
+import json
 
 
 class ShowList(object):
@@ -148,25 +149,28 @@ class ShowList(object):
                 if callable(field):
                     val = field(self.config, obj)
                 else:
-                    field_obj = self.config.model._meta.get_field(field)   # 拿到字段对象
-                    if isinstance(field_obj, ManyToManyField):  # 判断是否是多对多
-                        # 反射处理  增加.all
-                        # 多对多的情况  obj.field.all()
-                        ret = getattr(obj, field).all()  # <QuerySet [<Author: alex>, <Author: egon>]>
-                        t = []
-                        for obj in ret:
-                            t.append(str(obj))
-                        val = ",".join(t)   # 用join方法实现拼接   alex,egon
+                    try:    # 如果是普通字段
+                        field_obj = self.config.model._meta.get_field(field)   # 拿到字段对象
+                        if isinstance(field_obj, ManyToManyField):  # 判断是否是多对多
+                            # 反射处理  增加.all
+                            # 多对多的情况  obj.field.all()
+                            ret = getattr(obj, field).all()  # <QuerySet [<Author: alex>, <Author: egon>]>
+                            t = []
+                            for obj in ret:
+                                t.append(str(obj))
+                            val = ",".join(t)   # 用join方法实现拼接   alex,egon
 
-                    else:
-                        # 非多对多的情况
-                        val = getattr(obj, field)   # 拿到的关联对象  处理不了多对多
-                        if field in self.config.list_display_links:
-                            # _url = reverse("%s_%s_change" % (app_label, model_name), args=(obj.pk,))
-                            _url = self.config.get_change_url(obj)
+                        else:
+                            # 非多对多的情况
+                            val = getattr(obj, field)   # 拿到的关联对象  处理不了多对多
+                            if field in self.config.list_display_links:
+                                # _url = reverse("%s_%s_change" % (app_label, model_name), args=(obj.pk,))
+                                _url = self.config.get_change_url(obj)
 
-                            val = mark_safe("<a href='%s'>%s</a>" % (_url, val))
-
+                                val = mark_safe("<a href='%s'>%s</a>" % (_url, val))
+                    except Exception as e:   # 如果是__str__
+                        val = getattr(obj, field)   # 反射拿到对象__str__函数的返回值 self.name  武汉大学出版社
+                        print(val)  # <bound method Publish.__str__ of <Publish: 武汉大学出版社>>
                 temp.append(val)
 
             new_data_list.append(temp)
@@ -238,17 +242,51 @@ class ModelStark(object):
             return self.modelform_class
 
     def add_view(self, request):
+        """添加页面视图"""
         ModelFormDemo = self.get_modelform_class()
+        form = ModelFormDemo()  # 实例化步骤提前不管是post请求还是get请求都会传递到模板中
+
+        for bound_field in form:   # 拿到每一个字段
+            # from django.forms.boundfield import BoundField
+            # print(bound_field.field)  # 字段对象
+            print(bound_field.name)   # title\publishDate\publish  字段名称
+            # print(type(bound_field.field))  # 字段类型
+            from django.forms.models import ModelChoiceField  # ModelMultipleChoiceField继承ModelChoiceField
+            if isinstance(bound_field.field, ModelChoiceField):  # 通过这个判断是否是一对多或多对多的字段对象
+                bound_field.is_pop = True   # 给所有一对多、多对多对象添加is_pop这个属性
+
+                # 需要拿到的不是当前表而是字段关联表
+                print("===》", bound_field.field.queryset.model)
+                """
+                一对多或者多对多字段的关联模型表
+                <class 'app01.models.Publish'>  
+                <class 'app01.models.Author'>
+                """
+                # 拿到模型名和应用名
+                related_model_name = bound_field.field.queryset.model._meta.model_name
+                related_app_label = bound_field.field.queryset.model._meta.app_label
+                # 拼出添加页面地址
+                _url = reverse("%s_%s_add" % (related_app_label, related_model_name))
+                # url拿到后，再在后面拼接字段名称
+                bound_field.url = _url + "?pop_res_id=id_%s" % bound_field.name   # /?pop_res_id=id_authors
+
         if request.method == "POST":
             form = ModelFormDemo(request.POST)
             if form.is_valid():  # 校验字段全部合格
-                form.save()
-                return redirect(self.get_list_url())  # 跳转到当前访问表的查看页面
+                obj = form.save()   # 将数据保存到数据库
+                print(obj)   # 拿到返回值：当前生成的记录
+                pop_res_id = request.GET.get("pop_res_id")   # 拿到window.open打开页面后面的get请求
 
-            # （精髓）校验有错误返回页面，且包含了错误信息
-            return render(request, "add_view.html", locals())
+                if pop_res_id:
+                    # 当属于window.open页面post请求
+                    res = {"pk": obj.pk, "text": str(obj), "pop_res_id": pop_res_id}
 
-        form = ModelFormDemo()  # 实例化
+                    return render(request, "pop.html", {"res": res})
+                else:
+                    # 跳转到当前访问表的查看页面
+                    return redirect(self.get_list_url())
+                    # 校验有错误返回页面，且包含了错误信息
+
         return render(request, "add_view.html", locals())
 
     def delete_view(self, request, id):

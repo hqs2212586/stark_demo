@@ -54,7 +54,6 @@ class Pagination(object):
     def end(self):
         return self.current_page * self.per_page_num
 
-
     def page_html(self):
         # 如果总页码 < 11个：
         if self.all_pager <= self.pager_count:

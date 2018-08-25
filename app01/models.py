@@ -23,7 +23,8 @@ class AuthorDetail(models.Model):
     addr = models.CharField(max_length=64)
 
     def __str__(self):
-        return self.telephone
+        # 返回的不能是一个数字一定要强制转为一个字符串
+        return str(self.telephone)
 
 
 class Publish(models.Model):
